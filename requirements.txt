@@ -1,8 +1,9 @@
-streamlit 
-langchain 
-langchain_ollama
-selenium
-beautifulsoup4
-lxml 
-html5lib
-python-dotenv
+streamlit>=1.28.0
+langchain>=0.0.340
+langchain-ollama>=0.1.0
+requests>=2.31.0
+beautifulsoup4>=4.12.2
+scikit-learn>=1.3.0
+numpy>=1.24.3
+lxml>=4.9.3
+python-dotenv>=1.0.0

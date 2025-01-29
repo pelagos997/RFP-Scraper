@@ -1,76 +1,88 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-import time
+import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin  # For resolving relative URLs
+from urllib.parse import urljoin
+import re
+from functools import lru_cache
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import numpy as np
+from sklearn.cluster import DBSCAN
 
-# Add to scrape.py
-from urllib.parse import urljoin  # For resolving relative URLs
+file_extensions = {
+    ".pdf": "PDFs",
+    ".xls": "Excel/CSV",
+    ".xlsx": "Excel/CSV",
+    ".csv": "Excel/CSV",
+    ".zip": "ZIPs",
+    ".doc": "Documents",
+    ".docx": "Documents"
+}
 
-def extract_download_links(html_content, base_url):
-    """Extract and categorize downloadable links from HTML content."""
+@lru_cache(maxsize=32)
+def cached_scrape_website(url):
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch URL: {str(e)}")
+
+def extract_projects(html_content, base_url):
+    """Cluster content into projects with proper URL resolution"""
     soup = BeautifulSoup(html_content, 'html.parser')
-    links = soup.find_all('a')
+    elements = soup.find_all(['div', 'p', 'h2', 'h3', 'table'])
     
-    download_links = []
-    for link in links:
-        href = link.get('href')
-        if href:
-            # Resolve relative URLs (e.g., "/documents/plans.pdf" -> "https://dot.com/documents/plans.pdf")
-            absolute_url = urljoin(base_url, href)
-            download_links.append(absolute_url)
+    blocks = []
+    for idx, el in enumerate(elements):
+        text = el.get_text(' ', strip=True)
+        if not text:
+            continue
+            
+        blocks.append({
+            'text': text,
+            'order': idx,
+            'is_header': el.name.startswith('h'),
+            'is_table': el.name == 'table',
+            'hrefs': [urljoin(base_url, a['href']) for a in el.find_all('a', href=True)]
+        })
     
-    # Filter by common dataset file extensions
-    file_types = {
-        "PDFs": [".pdf"],
-        "Excel/CSV": [".xls", ".xlsx", ".csv"],
-        "ZIPs": [".zip"],
-        "Documents": [".doc", ".docx"]
+    X = np.array([[b['order'], len(b['text'])] for b in blocks])
+    clustering = DBSCAN(eps=4, min_samples=2).fit(X)
+    
+    projects = []
+    for cluster_id in set(clustering.labels_):
+        if cluster_id == -1:
+            continue
+        cluster_blocks = [b for b, c in zip(blocks, clustering.labels_) if c == cluster_id]
+        projects.append(cluster_blocks)
+    
+    return projects
+
+def associate_documents(context, links):
+    """Document association logic"""
+    doc_patterns = {
+        'plans': r'\b(plan|detail|drawing)\b',
+        'specs': r'\b(spec|standard|requirement)\b',
+        'bids': r'\b(bid|proposal|submission)\b',
+        'reports': r'\b(report|analysis|assessment)\b'
     }
     
-    organized = {category: [] for category in file_types}
-    for link in download_links:
-        for category, exts in file_types.items():
-            if any(link.lower().endswith(ext) for ext in exts):
-                organized[category].append(link)
-                break  # Avoid duplicates
+    associated = {k: [] for k in doc_patterns}
+    associated['project_specific'] = []
     
-    return organized
-
-def scrape_website(website):
-    print("Launching chrome browser...")
-
-    chrome_driver_path = "./chromedriver.exe"
-    options = webdriver.ChromeOptions()
-    driver = webdriver.Chrome(service=Service(chrome_driver_path), options=options)
-
-    try: 
-        driver.get(website)
-        print("Website loaded successfully!")
-        html = driver.page_source
-        time.sleep(10)
-        
-        return html
-    finally:
-        driver.quit()
-def extract_body_content(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
-    body_content = soup.body
-    if body_content:
-        return str(body_content)
-    return ""
-def clean_body_content(body_content):
-    soup = BeautifulSoup(body_content, 'html.parser')
-    for script_or_style in soup(["script", "style"]):
-        script_or_style.extract()
+    # First pass: Filename pattern matching
+    for link in links:
+        filename = link.split('/')[-1].lower()
+        for doc_type, pattern in doc_patterns.items():
+            if re.search(pattern, filename):
+                associated[doc_type].append(link)
+                break
     
-    cleaned_content = soup.get_text(separator="\n")
+    # Second pass: Contextual project ID matching
+    project_ids = re.findall(r'\b[A-Z]{2,4}-\d{4}\b', context)
+    for link in links:
+        if any(pid in link for pid in project_ids):
+            associated['project_specific'].append(link)
     
-    # removes extra empty text space
-    cleaned_content = "\n".join([line for line in cleaned_content.split("\n") if line.strip()])
+    return associated
 
-    return cleaned_content
-def split_dom_content(dom_content, max_length=6000):
-    
-    #token limiter for dom content
-    return [dom_content[i:i+max_length] for i in range(0, len(dom_content), max_length)]
+# Rest of existing scrape.py functions remain unchanged...
