@@ -1,11 +1,10 @@
 import streamlit as st
-import json  # Added JSON import
+import json
 from scrape import extract_download_links, cached_scrape_website
 from scrape import extract_body_content, clean_body_content, split_dom_content
 from parse import parse_with_ollama
-import re
 
-# Initialize session state with proper structure
+# Initialize session state
 if "dom_content" not in st.session_state:
     st.session_state.dom_content = ""
 if "projects" not in st.session_state:
@@ -13,85 +12,86 @@ if "projects" not in st.session_state:
 if "editing_project" not in st.session_state:
     st.session_state.editing_project = None
 
-def edit_project_interface():
-    """Interface for editing project documents"""
-    project_idx = st.session_state.editing_project
-    project = st.session_state.projects[project_idx]
-    
-    st.subheader(f"Editing Project {project_idx + 1}")
-    
-    # Display current documents
-    with st.expander("Current Documents"):
-        for category, links in project['download_links'].items():
-            st.write(f"**{category}**")
-            for link in links:
-                st.markdown(f"- [{link}]({link})")
-    
-    # Add document editing controls
-    new_links = st.text_area("Add/Modify Links (one per line)", 
-                           value="\n".join([link for links in project['download_links'].values() for link in links]))
-    
-    if st.button("Save Changes"):
-        # Update links in session state
-        updated_links = extract_download_links("\n".join(new_links.split("\n")), st.session_state.current_url)
-        st.session_state.projects[project_idx]['download_links'] = updated_links
-        st.session_state.editing_project = None
-        st.experimental_rerun()
+st.title('RFP Document Analyzer')
 
-st.title('RFP Scraper')
-url = st.text_input("Enter a Website URL: ")
-st.session_state.current_url = url  # Store current URL for editing
+# URL input
+url = st.text_input("Enter RFP Website URL:")
+st.session_state.current_url = url
 
-if st.button("Scrape"):
-    st.write("Scraping the Website...")
-    try:
-        html_content = cached_scrape_website(url)
-        body_content = extract_body_content(html_content)
-        cleaned_content = clean_body_content(body_content)
-        
-        download_links = extract_download_links(html_content, base_url=url)
-        
-        # Store data in session state
-        st.session_state.dom_content = cleaned_content
-        st.session_state.download_links = download_links
-        st.session_state.projects = [{
-            'content': cleaned_content,
-            'download_links': download_links
-        }]
+if st.button("Analyze Website"):
+    if url:
+        with st.spinner("Analyzing website content..."):
+            try:
+                # Scrape and process content
+                html_content = cached_scrape_website(url)
+                body_content = extract_body_content(html_content)
+                cleaned_content = clean_body_content(body_content)
+                download_links = extract_download_links(html_content, base_url=url)
+                
+                # Store in session state
+                st.session_state.dom_content = cleaned_content
+                st.session_state.download_links = download_links
+                st.session_state.projects = [{
+                    'content': cleaned_content,
+                    'download_links': download_links
+                }]
 
-        with st.expander("View Cleaned Content"):
-            st.text_area("Content", cleaned_content, height=300)
-            
-        st.subheader("Downloadable Files")
-        for category, links in download_links.items():
-            if links:
-                with st.expander(f"{category} ({len(links)})"):
-                    for link in links:
-                        st.markdown(f"[{link}]({link})")
+                # Display results
+                st.success("Website analyzed successfully!")
+                
+                with st.expander("View Processed Content"):
+                    st.text_area("Content", cleaned_content, height=300)
+                
+                st.subheader("📎 Downloadable Files")
+                for category, links in download_links.items():
+                    if links:
+                        with st.expander(f"{category} ({len(links)})"):
+                            for link in links:
+                                st.markdown(f"[{link}]({link})")
                         
-    except Exception as e:
-        st.error(f"Scraping failed: {str(e)}")
+            except Exception as e:
+                st.error(f"Error analyzing website: {str(e)}")
+    else:
+        st.warning("Please enter a URL")
 
+# Content analysis section
 if st.session_state.dom_content:
-    parse_query = st.text_area("What information do you want to extract?")
+    st.divider()
+    st.subheader("🔍 Ask Questions About the Content")
+    query = st.text_area("What would you like to know about this RFP?", 
+                        placeholder="Example: What are the key dates and deadlines?")
     
-    if st.button("Parse Content") and parse_query:
-        st.write("Processing with LLM...")
-        with st.spinner("Analyzing content..."):
-            dom_chunks = split_dom_content(st.session_state.dom_content)
-            result = parse_with_ollama(dom_chunks, parse_query)
-            st.subheader("Extracted Results")
-            st.write(result)
+    if st.button("Analyze") and query:
+        with st.spinner("Processing your question..."):
+            try:
+                chunks = split_dom_content(st.session_state.dom_content)
+                result = parse_with_ollama(chunks, query)
+                
+                st.subheader("📑 Analysis Results")
+                
+                # Display structured results
+                if result.get("title"):
+                    st.markdown(f"**Project Title:** {result['title']}")
+                if result.get("description"):
+                    st.markdown(f"**Description:** {result['description']}")
+                if result.get("key_details"):
+                    st.markdown("**Key Details:**")
+                    for key, value in result["key_details"].items():
+                        st.markdown(f"- {key}: {value}")
+                if result.get("dates"):
+                    st.markdown("**Important Dates:**")
+                    for date_type, date in result["dates"].items():
+                        st.markdown(f"- {date_type}: {date}")
+                        
+            except Exception as e:
+                st.error(f"Error analyzing content: {str(e)}")
 
-# Project editing interface
-if st.session_state.editing_project is not None:
-    edit_project_interface()
-
-# Add document export functionality
+# Export functionality
 if st.session_state.projects:
+    st.divider()
     st.download_button(
-        "Export Project Data (JSON)",
+        "💾 Export Analysis (JSON)",
         data=json.dumps(st.session_state.projects, indent=2),
-        file_name="project_data.json",
+        file_name="rfp_analysis.json",
         mime="application/json"
     )
