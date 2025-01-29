@@ -1,8 +1,0 @@
-```text
-__pycache__/
-*.py[cod]
-env/
-venv/
-.env
-chromedriver.exe
-.DS_Store

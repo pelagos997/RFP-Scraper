@@ -2,6 +2,40 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 import time
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin  # For resolving relative URLs
+
+# Add to scrape.py
+from urllib.parse import urljoin  # For resolving relative URLs
+
+def extract_download_links(html_content, base_url):
+    """Extract and categorize downloadable links from HTML content."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    links = soup.find_all('a')
+    
+    download_links = []
+    for link in links:
+        href = link.get('href')
+        if href:
+            # Resolve relative URLs (e.g., "/documents/plans.pdf" -> "https://dot.com/documents/plans.pdf")
+            absolute_url = urljoin(base_url, href)
+            download_links.append(absolute_url)
+    
+    # Filter by common dataset file extensions
+    file_types = {
+        "PDFs": [".pdf"],
+        "Excel/CSV": [".xls", ".xlsx", ".csv"],
+        "ZIPs": [".zip"],
+        "Documents": [".doc", ".docx"]
+    }
+    
+    organized = {category: [] for category in file_types}
+    for link in download_links:
+        for category, exts in file_types.items():
+            if any(link.lower().endswith(ext) for ext in exts):
+                organized[category].append(link)
+                break  # Avoid duplicates
+    
+    return organized
 
 def scrape_website(website):
     print("Launching chrome browser...")
